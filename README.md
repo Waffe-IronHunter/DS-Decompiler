@@ -29,7 +29,6 @@ This project was built to replace `ktools` by fixing several long-standing mathe
 ## 📖 The Hash Dictionary (`hash_dict.txt`)
 Klei's engine converts symbol names (like `swap_object`) into 32-bit integer hashes. Because hashes cannot be reversed, this tool builds a dictionary of known words. 
 Every time you run the tool, it scrapes the binary files for new strings and saves them to `hash_dict.txt`. You can manually add words to this file (one per line) if you encounter missing symbols.
-I prepopulated the hash_dict using an automated script to grab all relevant strings from the scripts folder
 
 ## ⚖️ License & Credits
 This software is released under the **GNU General Public License v2.0 (GPLv2)**.
