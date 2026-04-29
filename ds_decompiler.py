@@ -297,6 +297,7 @@ class BuildRegistry:
                         'build_name': build_name,
                         'symbol_hash': sym_hash,
                         'framenum': i,
+                        'image_framenum': i, # Points to its own image
                         'bbox_x': f['bbox_x'],
                         'bbox_y': f['bbox_y'],
                         'w': f['w'],
@@ -313,10 +314,12 @@ class BuildRegistry:
                         'is_blank': False
                     })
                 else:
+                    # Missing frame! Inherit everything from the last valid frame, and point to its image!
                     frame_list.append({
                         'build_name': build_name,
                         'symbol_hash': sym_hash,
                         'framenum': i,
+                        'image_framenum': last_valid_frame['framenum'], # Points to the previous valid image!
                         'bbox_x': last_valid_frame['bbox_x'],
                         'bbox_y': last_valid_frame['bbox_y'],
                         'w': last_valid_frame['w'],
@@ -473,8 +476,11 @@ class SCMLBuilder:
             file_id = 0
             for frame_data in frame_list:
                 framenum = frame_data['framenum']
+                image_framenum = frame_data['image_framenum']
+                
                 frame_name = f"{sym_name}-{framenum}"
-                file_path_scml = f"{sym_name}/{frame_name}.png"
+                image_name = f"{sym_name}-{image_framenum}"
+                file_path_scml = f"{sym_name}/{image_name}.png"
                     
                 self.files[sym_hash][framenum] = {
                     'folder_id': folder_id, 
@@ -490,10 +496,8 @@ class SCMLBuilder:
                 px = 0.5 - (frame_data['bbox_x'] / w_ceil)
                 py = 0.5 + (frame_data['bbox_y'] / h_ceil)
                 
-                if frame_data['is_blank']:
-                    blank_img = Image.new('RGBA', (w_ceil, h_ceil), (0, 0, 0, 0))
-                    blank_img.save(os.path.join(os_folder, f"{frame_name}.png"))
-                else:
+                # ONLY crop and save if it's a real frame. If it's a duplicate, skip saving!
+                if not frame_data['is_blank']:
                     atlas_idx = frame_data['atlas_idx']
                     if atlas_idx < len(atlas_paths):
                         atlas_path = atlas_paths[atlas_idx]
@@ -535,9 +539,10 @@ class SCMLBuilder:
                                     paste_y = int(round(frame_data['bbox_y'] + frame_data['h'] / 2.0 - frame_data['max_y']))
                                     
                                     final_img.paste(crop_img, (paste_x, paste_y))
-                                    final_img.save(os.path.join(os_folder, f"{frame_name}.png"))
+                                    # Save using image_name so duplicates point to the same file
+                                    final_img.save(os.path.join(os_folder, f"{image_name}.png"))
                                 except Exception as e:
-                                    print(f"      ->[ERROR] Failed to crop {frame_name}: {e}", flush=True)
+                                    print(f"      ->[ERROR] Failed to crop {image_name}: {e}", flush=True)
 
                 folder_elem = root.find(f".//folder[@id='{folder_id}']")
                 ET.SubElement(folder_elem, "file", id=str(file_id), name=file_path_scml,
