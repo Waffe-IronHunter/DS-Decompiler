@@ -12,6 +12,7 @@ This project was built to replace `ktools` by fixing several long-standing mathe
 * **Interactive Conflict Resolution:** If multiple builds contain the same symbol (e.g., `head`), the tool interactively asks you which build to use, preventing cross-contamination.
 * **Support for multiple .zip:** `ktools` Can't decompile multiple anim.bin and build.bin at the same time, and consolidate them into one .scml file
 * **Preserves missing symbols:** `ktools` Omits missing symbols in the .scml file, this code allows you to override missing symbols with another e.g. swap_object with swap_axe
+* **Fixes duplicate symbols:** `ktools` Duplicate symbols are broken when decompiled by krane, this fixes this issue so the symbol order is preserved properly in .scml folder structure
 
 ## 📥 Installation
 1. Install [Python 3.x](https://www.python.org/downloads/).
