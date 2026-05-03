@@ -27,10 +27,6 @@ This project was built to replace `ktools` by fixing several long-standing mathe
    `python ds_decompiler.py`
 3. The script will automatically extract the files, harvest the strings, crop the textures, and generate a `decompiled_project` folder containing your ready-to-edit `.scml` file.
 
-## 📖 The Hash Dictionary (`hash_dict.txt`)
-Klei's engine converts symbol names (like `swap_object`) into 32-bit integer hashes. Because hashes cannot be reversed, this tool builds a dictionary of known words. 
-Every time you run the tool, it scrapes the binary files for new strings and saves them to `hash_dict.txt`. You can manually add words to this file (one per line) if you encounter missing symbols.
-
 ## ⚖️ License & Credits
 This software is released under the **GNU General Public License v2.0 (GPLv2)**.
 * Core binary structure and matrix math reverse-engineered by **Simplex** (original author of `[ktools](https://github.com/nsimplex/ktools)`).
