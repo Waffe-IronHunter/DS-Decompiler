@@ -1,14 +1,44 @@
+#!/usr/bin/env python3
+import sys
 import os
-import zipfile
-import subprocess
-import shutil
-import math
-import struct
-import traceback
-import re
-import xml.etree.ElementTree as ET
-from xml.dom import minidom
-from PIL import Image
+
+# ==========================================
+# LINUX DIRECTORY LOCK (Fixes double-click bug)
+# ==========================================
+try:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
+except Exception:
+    pass
+
+# ==========================================
+# BULLETPROOF CRASH LOGGER
+# ==========================================
+try:
+    import zipfile
+    import subprocess
+    import shutil
+    import math
+    import struct
+    import traceback
+    import re
+    import xml.etree.ElementTree as ET
+    from xml.dom import minidom
+    from PIL import Image
+except Exception as e:
+    import traceback
+    with open("crash_log.txt", "w") as f:
+        f.write("The script crashed before it could even start!\n")
+        f.write("Here is the error:\n\n")
+        f.write(traceback.format_exc())
+        f.write("\n\n(If it says 'No module named PIL', you need to run: pip3 install Pillow)")
+    
+    print("CRASHED! Please open the newly created 'crash_log.txt' file.")
+    try:
+        input("\nPress Enter to exit...")
+    except:
+        pass
+    sys.exit(1)
 
 # ==========================================
 # DEBUG TOGGLE
@@ -57,7 +87,6 @@ class HashManager:
             self.new_strings.add(s)
 
     def harvest_strings_from_file(self, filepath):
-        """The 'Hopper' Parser: Extracts clean strings using Klei's Length-Prefixed structure."""
         with open(filepath, "rb") as f:
             data = f.read()
 
@@ -79,14 +108,10 @@ class HashManager:
                         
                         if valid_symbol_pattern.match(candidate):
                             self.add_string(candidate)
-                            
-                            # THE HOP: Jump over Length + String + Hash
                             i += 4 + length_prefix + 4
                             continue
-                            
                     except UnicodeDecodeError:
                         pass 
-            
             i += 1
 
     def get_string(self, hash_val):
@@ -297,7 +322,7 @@ class BuildRegistry:
                         'build_name': build_name,
                         'symbol_hash': sym_hash,
                         'framenum': i,
-                        'image_framenum': i, # Points to its own image
+                        'image_framenum': i,
                         'bbox_x': f['bbox_x'],
                         'bbox_y': f['bbox_y'],
                         'w': f['w'],
@@ -314,12 +339,11 @@ class BuildRegistry:
                         'is_blank': False
                     })
                 else:
-                    # Missing frame! Inherit everything from the last valid frame, and point to its image!
                     frame_list.append({
                         'build_name': build_name,
                         'symbol_hash': sym_hash,
                         'framenum': i,
-                        'image_framenum': last_valid_frame['framenum'], # Points to the previous valid image!
+                        'image_framenum': last_valid_frame['framenum'],
                         'bbox_x': last_valid_frame['bbox_x'],
                         'bbox_y': last_valid_frame['bbox_y'],
                         'w': last_valid_frame['w'],
@@ -496,7 +520,6 @@ class SCMLBuilder:
                 px = 0.5 - (frame_data['bbox_x'] / w_ceil)
                 py = 0.5 + (frame_data['bbox_y'] / h_ceil)
                 
-                # ONLY crop and save if it's a real frame. If it's a duplicate, skip saving!
                 if not frame_data['is_blank']:
                     atlas_idx = frame_data['atlas_idx']
                     if atlas_idx < len(atlas_paths):
@@ -539,10 +562,9 @@ class SCMLBuilder:
                                     paste_y = int(round(frame_data['bbox_y'] + frame_data['h'] / 2.0 - frame_data['max_y']))
                                     
                                     final_img.paste(crop_img, (paste_x, paste_y))
-                                    # Save using image_name so duplicates point to the same file
                                     final_img.save(os.path.join(os_folder, f"{image_name}.png"))
                                 except Exception as e:
-                                    print(f"      ->[ERROR] Failed to crop {image_name}: {e}", flush=True)
+                                    pass
 
                 folder_elem = root.find(f".//folder[@id='{folder_id}']")
                 ET.SubElement(folder_elem, "file", id=str(file_id), name=file_path_scml,
@@ -642,12 +664,37 @@ class SCMLBuilder:
                               scale_x=str(k['scale_x']), scale_y=str(k['scale_y']))
 
 # ==========================================
-# 7. TEXTURE MANAGER
+# 7. SMART TEXTURE MANAGER
 # ==========================================
 class TextureManager:
-    def __init__(self, decompiler, ktech_path="ktools/ktech.exe"):
+    def __init__(self, decompiler):
         self.decompiler = decompiler
-        self.ktech_path = os.path.abspath(ktech_path)
+        
+        # Use absolute paths to guarantee we find the ktools folder
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.linux_ktech = os.path.join(base_dir, "ktools", "ktech")
+        self.win_ktech = os.path.join(base_dir, "ktools", "ktech.exe")
+        
+        self.use_wine = False
+        
+        if os.name == 'nt':
+            # We are on Windows
+            self.ktech_path = self.win_ktech
+        else:
+            # We are on Linux or Mac
+            if os.path.exists(self.linux_ktech):
+                self.ktech_path = self.linux_ktech
+                try:
+                    # Automatically grant execution permissions!
+                    os.chmod(self.ktech_path, 0o755)
+                except:
+                    pass
+            elif os.path.exists(self.win_ktech):
+                # Linux user only has the Windows version. Try to use Wine.
+                self.ktech_path = self.win_ktech
+                self.use_wine = True
+            else:
+                self.ktech_path = self.linux_ktech # Fallback
 
     def convert_tex_to_png(self, tex_filepath):
         abs_tex = os.path.abspath(tex_filepath)
@@ -656,27 +703,35 @@ class TextureManager:
         png_base = tex_base.replace(".tex", ".png")
         abs_png = os.path.join(tex_dir, png_base)
         
+        if not os.path.exists(self.ktech_path):
+            print(f"    -> [ERROR] Missing ktech binary at: {self.ktech_path}", flush=True)
+            return None
+            
         print(f"    -> Running ktech on {tex_base}...", flush=True)
+        
+        cmd_full = [self.ktech_path, abs_tex, abs_png]
+        cmd_fallback = [self.ktech_path, abs_tex]
+        
+        if self.use_wine:
+            cmd_full = ["wine"] + cmd_full
+            cmd_fallback = ["wine"] + cmd_fallback
+            
+        run_kwargs = {
+            'cwd': tex_dir,
+            'check': True,
+            'stdout': subprocess.DEVNULL,
+            'stderr': subprocess.DEVNULL,
+            'timeout': 15
+        }
+        
+        if os.name == 'nt':
+            run_kwargs['creationflags'] = 0x08000000
+            
         try:
-            creation_flags = 0x08000000 if os.name == 'nt' else 0
             try:
-                subprocess.run([self.ktech_path, abs_tex, abs_png], 
-                    cwd=tex_dir,
-                    check=True, 
-                    stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.DEVNULL,
-                    timeout=15,
-                    creationflags=creation_flags
-                )
+                subprocess.run(cmd_full, **run_kwargs)
             except subprocess.CalledProcessError:
-                subprocess.run([self.ktech_path, abs_tex], 
-                    cwd=tex_dir,
-                    check=True, 
-                    stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.DEVNULL,
-                    timeout=15,
-                    creationflags=creation_flags
-                )
+                subprocess.run(cmd_fallback, **run_kwargs)
             
             cwd_png = os.path.abspath(png_base)
             if not os.path.exists(abs_png) and os.path.exists(cwd_png):
@@ -688,8 +743,18 @@ class TextureManager:
                 print(f"    -> [ERROR] ktech finished, but {png_base} was not found!", flush=True)
                 return None
                 
+        except FileNotFoundError:
+            if self.use_wine:
+                print(f"    -> [ERROR] 'wine' is not installed! Linux cannot run ktech.exe without it.", flush=True)
+                print(f"       Please run this in your terminal: sudo apt install wine", flush=True)
+            else:
+                print(f"    -> [ERROR] The ktech file was found but Linux refuses to execute it.", flush=True)
+            return None
         except Exception as e:
-            print(f"    -> [ERROR] ktech failed: {e}", flush=True)
+            if isinstance(e, PermissionError):
+                print(f"    -> [ERROR] Permission Denied! On Linux, you must run: chmod +x {self.ktech_path}", flush=True)
+            else:
+                print(f"    -> [ERROR] ktech failed: {e}", flush=True)
             return None
 
 # ==========================================
@@ -706,7 +771,7 @@ class KleiPipeline:
         self.tex_manager = TextureManager(decompiler)
 
     def process_all_zips(self, output_dir="./decompiled_project"):
-        zips =[f for f in os.listdir('.') if f.endswith('.zip')]
+        zips =[f for f in os.listdir('.') if f.lower().endswith('.zip')]
         if not zips:
             print("No .zip files found in the current directory. Please place them next to this script.", flush=True)
             return
@@ -727,16 +792,17 @@ class KleiPipeline:
         print("\n--- Harvesting Strings ---", flush=True)
         for root, _, files in os.walk(temp_dir):
             for file in files:
-                if file.endswith((".build", ".anim", ".bin")):
+                if file.lower().endswith((".build", ".anim", ".bin")):
                     self.decompiler.hashes.harvest_strings_from_file(os.path.join(root, file))
         self.decompiler.hashes.save_dict()
 
         print("\n--- Processing Builds & Textures ---", flush=True)
         for root, _, files in os.walk(temp_dir):
             for file in files:
-                if file.endswith(".build") or file == "build.bin":
+                lowered_file = file.lower()
+                if lowered_file.endswith(".build") or lowered_file == "build.bin":
                     build_path = os.path.join(root, file)
-                    build_name = os.path.basename(root) if file == "build.bin" else file.replace('.build', '')
+                    build_name = os.path.basename(root) if lowered_file == "build.bin" else file.replace('.build', '').replace('.BUILD', '')
                     
                     print(f"Loading build: {build_name}...", flush=True)
                     try:
@@ -751,6 +817,8 @@ class KleiPipeline:
                                     atlas_png = self.tex_manager.convert_tex_to_png(tex_path)
                                     if atlas_png:
                                         atlas_png_paths.append(atlas_png)
+                                    else:
+                                        print(f"  -> [WARNING] TEXTURE FAILED: Could not convert '{atlas_file}'! Character will have missing textures.", flush=True)
                                 else:
                                     print(f"  -> [WARNING] Expected texture '{atlas_file}' not found in zip!", flush=True)
                         
@@ -763,9 +831,10 @@ class KleiPipeline:
         parsed_anims =[]
         for root, _, files in os.walk(temp_dir):
             for file in files:
-                if file.endswith(".anim") or file == "anim.bin":
+                lowered_file = file.lower()
+                if lowered_file.endswith(".anim") or lowered_file == "anim.bin":
                     anim_path = os.path.join(root, file)
-                    anim_name = os.path.basename(root) if file == "anim.bin" else file.replace('.anim', '')
+                    anim_name = os.path.basename(root) if lowered_file == "anim.bin" else file.replace('.anim', '').replace('.ANIM', '')
                     
                     print(f"Loading anim: {anim_name}...", flush=True)
                     try:
@@ -817,12 +886,17 @@ class KleiPipeline:
                 for idx, b in enumerate(builds):
                     print(f"  [{idx+1}] {b}")
                 while True:
-                    choice = input(f"Which build should provide '{sym_name}'? (1-{len(builds)}): ").strip()
-                    if choice.isdigit() and 1 <= int(choice) <= len(builds):
-                        selected_build = builds[int(choice)-1]
+                    try:
+                        choice = input(f"Which build should provide '{sym_name}'? (1-{len(builds)}): ").strip()
+                        if choice.isdigit() and 1 <= int(choice) <= len(builds):
+                            selected_build = builds[int(choice)-1]
+                            self.decompiler.registry.overrides[h] = (selected_build, h)
+                            break
+                        print("Invalid choice.")
+                    except EOFError:
+                        selected_build = builds[0]
                         self.decompiler.registry.overrides[h] = (selected_build, h)
                         break
-                    print("Invalid choice.")
 
         if missing_hashes:
             print("\n" + "="*50, flush=True)
@@ -846,7 +920,11 @@ class KleiPipeline:
             for h in missing_hashes:
                 sym_name = self.decompiler.hashes.get_string(h)
                 print(f"Missing Symbol: '{sym_name}'", flush=True)
-                substitute = input(f"Enter replacement (or press Enter to SKIP): ").strip()
+                try:
+                    substitute = input(f"Enter replacement (or press Enter to SKIP): ").strip()
+                except EOFError:
+                    substitute = ""
+                    
                 if substitute:
                     sub_hash = self.decompiler.hashes.get_hash(substitute)
                     sub_builds = list(self.decompiler.registry.symbols.get(sub_hash, {}).keys())
@@ -861,45 +939,51 @@ class KleiPipeline:
                         for idx, b in enumerate(sub_builds):
                             print(f"    [{idx+1}] {b}")
                         while True:
-                            choice = input(f"  -> Which build should provide '{substitute}'? (1-{len(sub_builds)}): ").strip()
-                            if choice.isdigit() and 1 <= int(choice) <= len(sub_builds):
-                                selected_build = sub_builds[int(choice)-1]
-                                self.decompiler.registry.overrides[h] = (selected_build, sub_hash)
-                                print(f"  -> Override Set: '{sym_name}' will use '{substitute}' from '{selected_build}'")
+                            try:
+                                choice = input(f"  -> Which build should provide '{substitute}'? (1-{len(sub_builds)}): ").strip()
+                                if choice.isdigit() and 1 <= int(choice) <= len(sub_builds):
+                                    selected_build = sub_builds[int(choice)-1]
+                                    self.decompiler.registry.overrides[h] = (selected_build, sub_hash)
+                                    print(f"  -> Override Set: '{sym_name}' will use '{substitute}' from '{selected_build}'")
+                                    break
+                            except EOFError:
                                 break
 
         print("\n" + "="*50, flush=True)
         print("MANUAL OVERRIDES", flush=True)
         print("="*50, flush=True)
         while True:
-            ans = input("Do you want to manually override any other symbols? (y/N): ").strip().lower()
-            if ans != 'y':
+            try:
+                ans = input("Do you want to manually override any other symbols? (y/N): ").strip().lower()
+                if ans != 'y':
+                    break
+                target = input("Enter the symbol you want to REPLACE (e.g. 'head'): ").strip()
+                if not target: continue
+                substitute = input(f"Enter the symbol to use INSTEAD of '{target}': ").strip()
+                if not substitute: continue
+                
+                t_hash = self.decompiler.hashes.get_hash(target)
+                s_hash = self.decompiler.hashes.get_hash(substitute)
+                
+                sub_builds = list(self.decompiler.registry.symbols.get(s_hash, {}).keys())
+                if not sub_builds:
+                    print(f"  -> Warning: '{substitute}' is not in any loaded build! Override ignored.")
+                elif len(sub_builds) == 1:
+                    self.decompiler.registry.overrides[t_hash] = (sub_builds[0], s_hash)
+                    print(f"  -> Override Set: '{target}' will use '{substitute}' from '{sub_builds[0]}'")
+                else:
+                    print(f"  -> '{substitute}' is in multiple builds:")
+                    for idx, b in enumerate(sub_builds):
+                        print(f"    [{idx+1}] {b}")
+                    while True:
+                        choice = input(f"  -> Which build should provide '{substitute}'? (1-{len(sub_builds)}): ").strip()
+                        if choice.isdigit() and 1 <= int(choice) <= len(sub_builds):
+                            selected_build = sub_builds[int(choice)-1]
+                            self.decompiler.registry.overrides[t_hash] = (selected_build, s_hash)
+                            print(f"  -> Override Set: '{target}' will use '{substitute}' from '{selected_build}'")
+                            break
+            except EOFError:
                 break
-            target = input("Enter the symbol you want to REPLACE (e.g. 'head'): ").strip()
-            if not target: continue
-            substitute = input(f"Enter the symbol to use INSTEAD of '{target}': ").strip()
-            if not substitute: continue
-            
-            t_hash = self.decompiler.hashes.get_hash(target)
-            s_hash = self.decompiler.hashes.get_hash(substitute)
-            
-            sub_builds = list(self.decompiler.registry.symbols.get(s_hash, {}).keys())
-            if not sub_builds:
-                print(f"  -> Warning: '{substitute}' is not in any loaded build! Override ignored.")
-            elif len(sub_builds) == 1:
-                self.decompiler.registry.overrides[t_hash] = (sub_builds[0], s_hash)
-                print(f"  -> Override Set: '{target}' will use '{substitute}' from '{sub_builds[0]}'")
-            else:
-                print(f"  -> '{substitute}' is in multiple builds:")
-                for idx, b in enumerate(sub_builds):
-                    print(f"    [{idx+1}] {b}")
-                while True:
-                    choice = input(f"  -> Which build should provide '{substitute}'? (1-{len(sub_builds)}): ").strip()
-                    if choice.isdigit() and 1 <= int(choice) <= len(sub_builds):
-                        selected_build = sub_builds[int(choice)-1]
-                        self.decompiler.registry.overrides[t_hash] = (selected_build, s_hash)
-                        print(f"  -> Override Set: '{target}' will use '{substitute}' from '{selected_build}'")
-                        break
 
 # ==========================================
 # 9. EXECUTION
@@ -911,10 +995,18 @@ if __name__ == "__main__":
         pipeline = KleiPipeline(decompiler)
         pipeline.process_all_zips()
     except Exception as e:
+        import traceback
+        with open("crash_log.txt", "w") as f:
+            f.write("CRASH DETECTED:\n\n")
+            f.write(traceback.format_exc())
+            
         print("\n" + "="*50, flush=True)
-        print("CRASH DETECTED! Here is the error for the AI:", flush=True)
+        print("CRASH DETECTED! A file named 'crash_log.txt' has been created.", flush=True)
         print("="*50, flush=True)
         traceback.print_exc()
         print("="*50, flush=True)
     finally:
-        input("\nPress Enter to exit...")
+        try:
+            input("\nPress Enter to exit...")
+        except EOFError:
+            pass
